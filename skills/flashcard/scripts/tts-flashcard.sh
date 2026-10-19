@@ -1,14 +1,13 @@
 #!/bin/bash
 # 闪卡发音生成器 — 微软 Christopher 美音 (en-US-ChristopherNeural)
-# 用法: tts-flashcard.sh <英文短语> <文件名(不带扩展)>
-# 如: tts-flashcard.sh "artificial" "artificial"
-# 输出: $HOME/obsidian-notes/work-notes/T-附件/audio/<文件名>.mp3
-# 失败降级: say -v Samantha + afconvert -> .m4a
+# 用法: tts-flashcard.sh <英文短语> <文件名(不带扩展)> <输出目录>
+# 如:   tts-flashcard.sh "artificial" "artificial" "/path/to/T-附件/audio"
+# 输出: <输出目录>/<文件名>.mp3；失败降级 say -v Samantha + afconvert -> .m4a
 set -u
 
-OUT_DIR="$HOME/obsidian-notes/work-notes/T-附件/audio"
 PHRASE="$1"
 NAME="$2"
+OUT_DIR="${3:?用法: tts-flashcard.sh <英文短语> <文件名> <输出目录>}"
 
 mkdir -p "$OUT_DIR"
 

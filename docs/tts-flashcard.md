@@ -9,11 +9,11 @@
 脚本随 `~/projects/opensource/ai-tools` 仓库管理，本文件是它的详情文档；改完提交并跑 `sync.sh` 同步到 magpie library。
 
 ```bash
-~/.config/magpie/library/skills/flashcard/scripts/tts-flashcard.sh "<英文短语>" "<文件名>"
-# 如: ~/.config/magpie/library/skills/flashcard/scripts/tts-flashcard.sh "artificial" "artificial"
+~/.config/magpie/library/skills/flashcard/scripts/tts-flashcard.sh "<英文短语>" "<文件名>" "<输出目录>"
+# 如: ~/.config/magpie/library/skills/flashcard/scripts/tts-flashcard.sh "artificial" "artificial" "<卡片目录>/../T-附件/audio"
 ```
 
-输出：`$HOME/obsidian-notes/work-notes/T-附件/audio/<文件名>.mp3`
+输出：`<输出目录>/<文件名>.mp3`（由调用方传入，脚本不写死路径）
 
 降级输出：`<文件名>.m4a`（edge-tts 联网失败时自动切换）
 
@@ -39,7 +39,7 @@
 
 ## 坑
 
-1. **必须传两个参数**，`set -u` 下缺参数会直接报错退出（预期的，防止生成出空文件）
+1. **必须传三个参数**（短语、文件名、输出目录），`set -u` 下缺参数会直接报错退出（预期的，防止生成出空文件或落到错误目录）
 2. **文件名不带扩展名**。若传入 `artificial.mp3`，会产出 `artificial.mp3.mp3`
 3. **文件名建议用小写 + 下划线**（如 `artificial_general_intelligence`），和 Obsidian 内引用保持一致
 4. **edge-tts 依赖网络**。首次 `uv run --with` 有拉包冷启动（数秒），之后仍是按需拉取

@@ -6,10 +6,9 @@
 
 | 路径 | 内容 |
 |---|---|
-| `skills/flashcard/SKILL.md` | 闪卡 skill 入口（各 agent 加载的编排层） |
-| `skills/flashcard/AGENTS.md` | 制卡规范总入口（流程、格式模板、泄底判定、自检） |
+| `skills/flashcard/SKILL.md` | 闪卡 skill：编排层 + 制卡规范（流程、格式模板、泄底判定、自检） |
 | `skills/flashcard/scripts/check-cards.py` | 卡片格式校验器，复刻 obsidian-spaced-repetition parser，纯标准库 |
-| `skills/flashcard/scripts/tts-flashcard.sh` | 发音生成（edge-tts 微软 Christopher 美音，失败降级 `say`） |
+| `skills/flashcard/scripts/tts-flashcard.sh` | 发音生成（edge-tts 微软 Christopher 美音，失败降级 `say`；输出目录由调用方传入） |
 | `docs/tts-flashcard.md` | tts 脚本详情（实现、坑、实测记录） |
 | `sync.sh` | 同步 `skills/*` 到 `~/.config/magpie/library/skills/` |
 
@@ -23,8 +22,8 @@
 
 ## 外部依赖（不在本仓库）
 
-- Obsidian vault：`~/obsidian-notes/work-notes/A-闪卡/`（卡片落点）
-  - 另外两份规范留在 vault：`记忆卡片方法论.md`（理论层）、`SR插件制卡最佳实践.md`（插件机制层）
+- 卡片目录：由各 agent 的全局提示词提供（Claude 的 `~/.claude/CLAUDE.md` 里有 `#闪卡` 段），skill 内不写死路径
+  - 该目录下另有两份数据侧规范：`记忆卡片方法论.md`（理论层）、`SR插件制卡最佳实践.md`（插件机制层）
 - `python3`：校验器，无第三方包
 - `uv` + `edge-tts`（联网拉包）：生成 mp3；macOS 自带 `say` / `afconvert` 兜底；`sips` 压缩图片
 
