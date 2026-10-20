@@ -9,6 +9,8 @@
 | `skills/flashcard/SKILL.md` | 闪卡 skill：编排层 + 制卡规范（流程、格式模板、泄底判定、自检） |
 | `skills/flashcard/scripts/check-cards.py` | 卡片格式校验器，复刻 obsidian-spaced-repetition parser，纯标准库 |
 | `skills/flashcard/scripts/tts-flashcard.sh` | 发音生成（edge-tts 微软 Christopher 美音，失败降级 `say`；输出目录由调用方传入） |
+| `skills/deepseek-web-search/SKILL.md` | DeepSeek 搜索 skill：参数、查询操作符、结果解读、限流与计费 |
+| `skills/deepseek-web-search/scripts/search.py` | `/v1/tools/search` 客户端，纯标准库，凭证读 `DEEPSEEK_API_KEY` |
 | `docs/tts-flashcard.md` | tts 脚本详情（实现、坑、实测记录） |
 | `sync.sh` | 同步 `skills/*` 到 `~/.config/magpie/library/skills/` |
 
