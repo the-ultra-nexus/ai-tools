@@ -1,6 +1,6 @@
 ---
 name: deepseek-web-search
-description: DeepSeek 联网搜索 API（/v1/tools/search），返回带 rerank_score、authority、date 加权的网页结果，支持 site:/lang:/after: 等查询操作符。需要联网事实、时效信息、出处求证时使用。凭证为环境变量 DEEPSEEK_API_KEY。收费 API（$0.75/千次成功请求），账户级 100 QPS 限流。
+description: DeepSeek 联网搜索 API（/v1/tools/search），返回带 rerank_score、authority、date 加权的网页结果，支持 site:/lang:/after: 等查询操作符。需要联网事实、时效信息、出处求证时使用。凭证为环境变量 DEEPSEEK_API_KEY。收费 API（$0.75/千次成功请求，仅 HTTP 200 且结果非空才计费），账户级 100 QPS 限流。
 argument-hint: "<查询词> [-c N] [--need-content] [--ori-question <原始问题>]"
 ---
 
@@ -72,13 +72,5 @@ query 原样转发给搜索引擎，操作符可组合：
 | 402 | 余额不足 | 充值后重试 |
 | 408 / 429 / 5xx | 超时、限流、服务端错误 | 等待后重试 |
 | 413 | 请求体过大 | 缩短 query / 减少参数 |
-
-## 7. 计费
-
-按**成功请求**计费，不按 token、不按返回条数：Search **$0.75 / 千次**。
-
-- 只有 **HTTP 200 且 `results` 非空** 才计费；失败、空结果、超时都免费。
-- `count` 只影响返回条数，**不影响单价**。
-- 通过 DeepSeek Harness / Claude Code / Codex 走的服务端工具调用目前免费，**2026-11-01 00:00（北京时间）起开始按上述单价计费**。
 
 > 价格、限流、免费期都可能调整，以官方文档为准；本节的数字写死于 2026-10，若与文档不符以文档为据。

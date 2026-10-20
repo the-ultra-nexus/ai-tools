@@ -10,6 +10,7 @@
     python3 search.py "DeepSeek 财报" --need-content --ori-question "DeepSeek 去年营收多少"
 """
 import argparse
+import getpass
 import json
 import os
 import sys
@@ -39,17 +40,27 @@ def build_body(args):
 
 
 def search(body, api_key):
-    req = urllib.request.Request(
-        API_URL,
-        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.load(resp)
+    def build():
+        # shortcut: urlopen 失败会把代理地址缓存进 req.host，复用对象会导致绕代理重试仍连死代理；重试必须新建
+        return urllib.request.Request(
+            API_URL,
+            data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+
+    try:
+        with urllib.request.urlopen(build(), timeout=30) as resp:
+            return json.load(resp)
+    except urllib.error.URLError as exc:
+        # shortcut: URLError 可能只是代理挂了；用空代理 opener 直连重试一次，不行才报错
+        if not isinstance(exc, urllib.error.HTTPError) and urllib.request.getproxies():
+            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(build(), timeout=30) as resp:
+                return json.load(resp)
+        raise
 
 
 def format_output(results, need_content):
@@ -109,6 +120,8 @@ def main():
         fail("--ori-question 超过 128 字符。")
 
     api_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+    if not api_key and sys.stdin.isatty():
+        api_key = getpass.getpass("DEEPSEEK_API_KEY: ").strip()
     if not api_key:
         fail("未设置 DEEPSEEK_API_KEY。", HINTS[401])
 
@@ -122,7 +135,8 @@ def main():
             message = raw[:500] or str(exc)
         fail(f"HTTP {exc.code}: {message}", HINTS.get(exc.code, "修改请求后重试，不要原样重试。"))
     except urllib.error.URLError as exc:
-        fail(f"网络错误: {exc.reason}", "检查网络或代理设置。")
+        reason = getattr(exc, "reason", exc)
+        fail(f"网络错误: {reason}", "检查网络；已尝试绕过代理直连仍失败，请确认代理设置（http_proxy/https_proxy）与网络可用。")
 
     results = data.get("results") or []
     if not results:
