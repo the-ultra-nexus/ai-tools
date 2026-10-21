@@ -11,7 +11,7 @@
 | `skills/flashcard/scripts/tts-flashcard.sh` | 发音生成（edge-tts 微软 Christopher 美音，失败降级 `say`；输出目录由调用方传入） |
 | `skills/deepseek-web-search/SKILL.md` | DeepSeek 搜索 skill：参数、查询操作符、结果解读、限流与计费 |
 | `skills/deepseek-web-search/scripts/search.py` | `/v1/tools/search` 客户端，纯标准库，凭证读 `DEEPSEEK_API_KEY` |
-| `skills/ao-flow/SKILL.md` | 主脑编排的全自动多 agent 编码流 skill（v2 全链）：Workflow tool 起多模型并行设计+交叉验证 → 主脑合成拆 task units → AO daemon 管 pi worker 执行 → ocr delegate 评审（含对抗二审）→ findings 回传修复到收敛；含路由（大任务全链/小任务短链/纯咨询只设计）、pi 调用模板与踩坑速查 |
+| `skills/paseo-flow/SKILL.md` | 主脑编排的全自动多 agent 编码流 skill：Claude 原生 subagent 并行设计+交叉验证 → 主脑合成拆 task units → Paseo daemon 管 pi worker（worktree 隔离）执行 → ocr delegate 评审（含对抗二审）→ findings 回传原 agent 修复到收敛；含路由（大任务全链/小任务短链/纯咨询只设计）、按输出上限定岗的模型分配表、pi/paseo 调用模板与踩坑速查 |
 | `docs/tts-flashcard.md` | tts 脚本详情（实现、坑、实测记录） |
 | `sync.sh` | 同步 `skills/*` 到 `~/.config/magpie/library/skills/` |
 | `check-frontmatter.sh` | 校验 `skills/*/SKILL.md` 的 YAML frontmatter（name/description 存在且可解析） |
