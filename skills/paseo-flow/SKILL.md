@@ -1,6 +1,6 @@
 ---
 name: paseo-flow
-description: '主脑编排的全自动多 agent 编码流（设计→拆分→执行→评审→收敛）：设计用 Claude 原生 subagent 并行+交叉验证，主脑合成 TASK_SPEC 拆 task units，Paseo daemon 管 pi worker（worktree 隔离）执行，宿主代跑 ocr delegate 评审并回传修复。大任务走全链，小任务自动跳到执行链。适用于"这事交给 agent 群做，我不参与，随时可打断"的完整委托。前置依赖：paseo CLI + daemon、pi 已登录、ocr 已装。'
+description: '主脑编排的全自动多 agent 编码流（设计→拆分→执行→评审→收敛）：设计由主脑自己出，缺外部事实时用 claude 子进程两路并行调研+交叉验证，主脑合成 TASK_SPEC 拆 task units，Paseo daemon 管 pi worker（worktree 隔离）执行，宿主代跑 ocr delegate 评审并回传修复。大任务走全链，小任务自动跳到执行链。适用于"这事交给 agent 群做，我不参与，随时可打断"的完整委托。前置依赖：paseo CLI + daemon、pi 已登录、ocr 已装、claude CLI 已接 magpie 网关。'
 argument-hint: "<任务描述>"
 ---
 
@@ -13,17 +13,25 @@ argument-hint: "<任务描述>"
 | 角色 | 模型 | 干什么 | 为什么是它 |
 |---|---|---|---|
 | 主脑 | 本会话 | 路由、合成、拆 unit、评审推理、收敛决策 | 唯一有全局上下文，不外包 |
-| 设计 lens / 交叉验证 | Claude 原生 subagent（Agent tool） | 并行调研、独立起草、逐条 refute | 长输出稳定、自带隔离上下文、能真跑 `--help`/读源码 |
+| 设计（方案成型 + 交叉验证） | 本会话（主脑） | 初始信息、技术路线、取舍，拿回的事实逐条钉死 | 唯一有全局上下文，设计不外包 |
+| 调研子进程 | `claude -p --model group/reviewer1` / `group/reviewer2` | 并行搜外部事实、跑 `--help`、读源码、refute 结论 | 全权限（MCP 搜索 + WebSearch + Skill + Bash），两路同题互为对照 |
 | 执行 worker | `paseo run --provider pi --model magpie/group/worker` | worktree 内写代码、跑验收、修 findings | 输出上限 384k，独占 worktree |
-| 对抗二审（默认） | `pi --model magpie/group/reviewer1` | 只看 High 的短裁决 | 输出上限 32k，逼它短，天然适合「只报 High」 |
-| 深度二审（大 diff） | `pi --model magpie/group/reviewer2` | 跨多文件/安全/并发 diff 复审 | 输出上限 131k，能铺开讲 |
-| 单点咨询 | `pi --model magpie/group/worker` | 技术选型问一句、方案抽查 | 短问短答不挑模型，直接复用执行角色，少记一个名字 |
+| 对抗二审（默认） | `claude -p --model group/reviewer1` | 只看 High 的短裁决 | 输出上限 32k，逼它短，天然适合「只报 High」 |
+| 深度二审（大 diff） | `claude -p --model group/reviewer2` | 跨多文件/安全/并发 diff 复审 | 输出上限 131k，能铺开讲 |
+| 单点咨询 | `claude -p --model group/worker` | 技术选型问一句、方案抽查 | 短问短答不挑模型，直接复用执行角色，少记一个名字 |
 
-pi 调用模板（咨询/二审，不进 worktree、不落 session）：
+分工铁律：**pi 只负责 §3 的 worker 代码生成**（由 paseo daemon 拉起）；评审与咨询一律走 `claude -p` 子进程直连 magpie 别名。
+
+claude 子进程模板（咨询/二审，不进 worktree、不落 session、不带工具）：
 
 ```bash
-pi -p -nc --no-tools --no-session --model 'magpie/group/reviewer1' '<prompt>'
+git --no-pager diff --no-color HEAD~1..HEAD | claude -p --bare --tools '' \
+  --no-session-persistence --model 'group/reviewer1' '<prompt>'
 ```
+
+- `--bare` 跳过 CLAUDE.md/hooks/MCP/插件：同一问实测 60s+ → 3~4s，评审循环里这差价很致命。
+- `--tools ''` 等价 pi 的 `--no-tools`；要它自己读仓库就换成 `--tools 'Read,Bash,Grep,Glob'`。
+- stderr 会打一行 `[claude-code:unrecognized_model] {"model":"group/reviewer1",...}`——magpie 别名不在 CLI 的模型表里，属无害噪声，stdout 干净，别 `2>&1` 把噪声混进评审结论。
 
 ## 0. 路由（第一件事，判断走哪条链）
 
@@ -35,19 +43,27 @@ pi -p -nc --no-tools --no-session --model 'magpie/group/reviewer1' '<prompt>'
 
 拿不准就按全链走——设计阶段多余的成本远小于错误方案返工。
 
-## 1. 设计阶段（Claude 原生 subagent 并行 + 交叉验证）
+## 1. 设计阶段（主脑出方案，调研才外包）
 
-用 **Agent tool** 起多个原生 subagent 并行设计（不要用 pi 子进程做长输出——实测会超时返空；原生 subagent 稳定且每个自带隔离上下文）。编排形状：
+**方案由主脑自己出**——初始信息、技术路线、取舍、接口形态全在本会话里成型，不开子进程做设计：设计的价值就在全局上下文，外包等于把它丢了。
 
-1. **N 路 lens 并行调研**：单条消息里发 N 个 Agent 调用（同 run 并行），每个 subagent 一个独立视角（如官方生态路线/通用框架路线/评审验证路线），prompt 自带完整背景（subagent 间不共享上下文）。subagent 有全工具权限：允许并鼓励它们实际跑 `--help`、读源码、联网查证。
-2. **主脑汇总调研**：分歧点显式标注（某结论 2:1 就是决策信息），不强行统一。
-3. **N 路独立起草**：再起 N 个 subagent 各出一版设计，互相看得到汇总调研、看不到对方草案。
-4. **交叉验证（关键，不可省）**：再起 1-2 个 subagent 当苛刻评审，对草案的**技术主张逐条 refute**——命令行参数是否真实存在（跑 `--help` 验证）、语义是否写反、流程是否断链。不信草案原文。
-5. **主脑合成**：结构取最优草案，事实细节以验证结论钉死；分歧保留进 research.md。
+只有「缺外部事实」时才起 claude 子进程调研：一条消息里发两个 Bash 调用并行跑，两路同题、各搜各的。
 
-subagent 的最终文本就是返回值，要求它们直接输出数据/结构化 markdown，不写给人看的客套。要一句第三方意见时用 `group/orchestrator`，别开 paseo agent。
+```bash
+claude -p --model 'group/reviewer1' --permission-mode bypassPermissions \
+  --no-session-persistence '<调研问题：要哪些事实、什么格式、要几条来源、每条必须带链接>'
 
-产出落盘：`sessions/<task-id>/research.md`（含分歧点）+ 设计草案存档。
+claude -p --model 'group/reviewer2' --permission-mode bypassPermissions \
+  --no-session-persistence '<同一个问题，换一路搜>'
+```
+
+- **权限给满**：`--permission-mode bypassPermissions` 下 MCP 搜索（anysearch/tavily/exa/context7）、WebSearch/WebFetch、Skill、Bash 全在手，不需要 `--allowedTools`。反过来 **绝不能加 `--bare`**——bare 把 MCP 与 WebSearch/WebFetch 一并砍掉，只剩 Bash/Edit/Read，调研直接瘸。
+- 逼子进程自己核实：跑 `--help`、读源码、点开 URL、多来源交叉；交回来的必须是「结论 + 出处」，没出处的事实一律记为未验证。
+- 子进程有全权限，也就有 Write/Edit 的能力——调研要在干净的 cwd 里跑，别让它站在待改的仓库上。
+- **不要让 pi 做调研或长输出**（实测超时返空）；pi 只归 §3 的 worker。
+- 两路回来由主脑汇总：一致的钉成事实，分歧保留进 research.md——分歧本身就是决策信息，不强行统一。交叉验证也在主脑这层做：逐条问「出自哪、哪个版本、现在还成立吗」。
+
+产出落盘：`sessions/<task-id>/research.md`（含分歧点与未验证项）。
 
 ## 2. 拆分阶段（主脑独占，不开子进程）
 
@@ -127,8 +143,9 @@ git --no-pager diff --no-ext-diff --no-textconv --no-color HEAD~1..HEAD -- "<pat
 **对抗二审（大任务启用）**：High 涉及安全/并发/核心逻辑时，另起异构模型看同一 diff 再评一遍——默认 `reviewer1` 只要 High，diff 跨多文件或要展开推理时换 `reviewer2`：
 
 ```bash
-pi -p -nc --no-tools --no-session --model 'magpie/group/reviewer1' \
-  '只报 High 级问题，逐条给 path:line 与修复建议，无则回复 NONE。diff 如下：<diff>'
+git --no-pager diff --no-color HEAD~1..HEAD | claude -p --bare --tools '' \
+  --no-session-persistence --model 'group/reviewer1' \
+  '只报 High 级问题，逐条给 path:line 与修复建议，无则回复 NONE。diff 如下：'
 ```
 
 两路都报的才进修复，单路报的降级 Medium。
