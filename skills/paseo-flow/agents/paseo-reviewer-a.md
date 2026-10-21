@@ -4,7 +4,7 @@ description: 'paseo-flow 冷评审 A 路。仅由 paseo-flow 显式点名，不�
 tools: Read, Grep, Glob, Bash
 model: group/reviewer1
 omitClaudeMd: true
-maxTurns: 4
+maxTurns: 8
 effort: high
 ---
 

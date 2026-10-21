@@ -1,6 +1,6 @@
 ---
 name: paseo-flow
-description: '主脑编排的全自动多 agent 编码流（设计→拆分→执行→评审→收敛）：设计由主脑自己出，缺外部事实时用两个原生 subagent（paseo-researcher-a/b，不同模型）并行调研+交叉验证，主脑合成 TASK_SPEC 拆 task units，全链派发前用 paseo-plan-critic 审 unit 规格，Paseo daemon 管 pi worker（worktree 隔离）执行，冷评审由原生 subagent（paseo-reviewer-a/b，不同模型）只输出 verdict+findings，主脑裁决，有界修复，人合并。拿不准降档走短链。前置依赖：paseo CLI + daemon、pi 已登录、ocr 已装、claude CLI 已接 magpie 网关、本 skill 的 agents/ 已同步到 ~/.claude/agents/paseo-flow/。'
+description: '主脑编排的全自动多 agent 编码流（设计→拆分→执行→评审→收敛）：设计由主脑自己出，缺外部事实时用两个原生 subagent（paseo-researcher-a/b，不同模型）并行调研+交叉验证，主脑合成 TASK_SPEC 拆 task units，派发前用 paseo-plan-critic 审 unit 规格，Paseo daemon 管 pi worker（worktree 隔离）执行，paseo-reviewer-a 全量冷评审、paseo-reviewer-b 做安全维度定向复审与 High 逐条证伪，主脑裁决，程序门禁判定完成，有界修复，状态落盘可续跑，人合并。拿不准降档走短链。前置依赖：paseo CLI + daemon、pi 已登录、ocr 已装、claude CLI 已接 magpie 网关、本 skill 的 agents/ 已同步到 ~/.claude/agents/paseo-flow/。'
 argument-hint: "<任务描述>"
 ---
 
@@ -16,7 +16,7 @@ argument-hint: "<任务描述>"
 | 调研 subagent | `paseo-researcher-a` / `-b`（定义内写死 `group/reviewer1` / `reviewer2`） | 缺外部事实时两路并行调研、跑 `--help`、读源码、refute 结论 |
 | 规格红队 | `paseo-plan-critic`（`group/reviewer2`） | 全链派发前审 unit 规格，不审代码 |
 | 执行 worker | `paseo run --provider pi --model magpie/group/worker` | worktree 内实现、跑验收、修 findings |
-| 评审 subagent | `paseo-reviewer-a` / `-b`（定义内写死 `group/reviewer1` / `reviewer2`） | 冷评审，只输出 verdict + findings |
+| 评审 subagent | `paseo-reviewer-a` / `-b`（定义内写死 `group/reviewer1` / `reviewer2`） | A 路全量冷评审；B 路只做安全/数据丢失/并发/测试削弱维度复审，或对单条 High 证伪 |
 
 pi 只跑 §3 的 worker（由 paseo daemon 拉起）；调研与评审走 Claude 原生 subagent，模型写在各 agent 定义的 `model:` 里。
 
@@ -42,10 +42,11 @@ git --no-pager diff --no-color <基线>..HEAD | claude -p --bare --tools 'Read,G
 
 **拿不准就降一档走短链**，在汇报里写一句「按短链走，理由 X」。
 
+- 短链同样落一份最小 unit 到 `$TASK_DIR/units/0-<slug>.md`（目标 / 基线 / 文件清单 / 验收命令），否则 §4 的评审没有契约可对照；§1 §2 其余项可省。
 - 短链出现 High、越界，或同一验收命令连续两次红 → 下一轮升全链。
 - 连续两次短链零 findings 且一次通过 → 同规模任务继续走短链。
 
-任务一开始就钉死 `TASK_DIR="$(pwd)/sessions/<task-id>"`；后文所有落盘都用 `$TASK_DIR` 绝对路径。§4 会 cd 进 worktree，相对路径会把文件写进别人的分支。
+任务一开始就钉死 `TASK_DIR="$HOME/data/paseo-flow/<task-id>"`（放仓库外，避免污染工作区），并 `mkdir -p "$TASK_DIR"/{units,state,review}`；后文所有落盘都用 `$TASK_DIR` 绝对路径。§4 会 cd 进 worktree，相对路径会把文件写进别人的分支。
 
 ## 1. 设计阶段（主脑出方案，调研才外包）
 
@@ -74,13 +75,14 @@ git --no-pager diff --no-color <基线>..HEAD | claude -p --bare --tools 'Read,G
 - **基线**：起始 commit
 - **契约**：导出签名、数据结构、错误语义；并行 unit 的接口以这里为准
 - **文件清单**：只许动这些；§3 用 `git diff --name-only` 对照，越界即停
+- **禁改**：已有测试、锁文件、CI 配置、迁移脚本一律不动；新增测试文件可以写。契约确需扩大范围时，必须在 unit 里显式列出
 - **验收命令**：命令行可判定（`node test.js` / `npm test`），没有验收命令的 unit 不许派发
-- **测试证据**：新增/修改的测试必须在实现前跑红一次；新测试文件可以先复制到基线 worktree 跑。红输出由 worker 在第一步产出并回传，§4 核对
+- **测试证据**：新增测试必须在实现前于基线代码上跑红一次（新测试文件可先复制到基线 worktree 跑）；worker 第一步回传红输出，主脑存到 `$TASK_DIR/units/<n>.red.txt`，§4 核对。没红过的测试不算证据
 - **依赖边**：依赖哪个 unit；无依赖的并行派，有依赖的串行等
 - **必读**：design.md、research.md、现有实现路径；只给指针，不复制全文
 - **非目标**：明确不做什么，防止顺手重构
 
-拆分原则：tracer-bullet（一条票一个端到端可验证的弹道），宁粗勿细——3 个大 unit 好过 9 个碎 unit。并行 worker ≤ 3，改同一文件的工作不并行。
+拆分原则：tracer-bullet（一条票一个端到端可验证的弹道），宁粗勿细——3 个大 unit 好过 9 个碎 unit。并行 worker ≤ 3，改同一文件的工作不并行。整链 unit 数 ≤6；总 review-fix 轮次 ≤2×unit 数；超限写 `ESCALATE` 停，不硬跑。
 
 unit 全部写完后，全链在派发前跑一次规格红队（短链跳过）：
 
@@ -123,6 +125,8 @@ id=$(paseo run --quiet --provider pi --model magpie/group/worker \
 ```bash
 WT=$(paseo inspect "$id" --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["Cwd"])')
 ```
+
+立刻把状态落到 `$TASK_DIR/state/<unit>.json`：`{"id","wt","base","branch","round","verdict"}`。每次 `wait`、`send`、评审回来都更新 round/verdict。会话被压缩或打断后照这个文件续跑，不靠回忆。
 
 等完成（单轮熔断 15min）：
 
@@ -170,23 +174,27 @@ git -C "$WT" diff --name-only <基线>..HEAD
 
 评审由独立 subagent 做，主脑不评自己写的 spec。
 
-1）宿主跑确定性检查：
+1）宿主跑确定性检查（这是门禁，由程序判定，不由任何 agent 自述）：
 
 ```bash
 cd "$WT"
 ocr delegate preview --format json --from <基线> --to HEAD
 ocr delegate rule --format json <files...>
 git -C "$WT" --no-pager diff --no-ext-diff --no-textconv --no-color <基线>..HEAD > "$TASK_DIR/<unit>.diff"
-git -C "$WT" diff --name-only <基线>..HEAD          # 越界
+git -C "$WT" diff --name-only <基线>..HEAD          # 越界；触及已有测试文件 → 标记，评审必须核对断言没被削弱
 <验收命令>                                           # 在 worktree 里重跑
+<typecheck / lint，仓库有就一并跑>                    # 没有就跳过，别自创
 ```
+
+任意一项红 → 不进评审：验收红按 §3 分类；越界或已有测试被改 → 冻结并写汇报。
 
 2）冷评审 subagent（新上下文，只看 unit 全文和仓库里的 diff，不看 worker 自述）：
 
-一条消息里起评审；默认只发 A 路，diff 跨 ≥3 文件或含安全/并发改动时再发 B 路：
+一条消息里起 A 路；B 路只在两种情况下起，每种各起一次（同一轮最多两次），两次调用上下文互不可见：
 
-- `subagent_type: paseo-reviewer-a`
-- prompt 包含：`worktree=<绝对路径>`、`基线=<sha>`、unit 全文、验收命令与最近一次输出，以及下面的输出格式。
+- `subagent_type: paseo-reviewer-a`：全量冷评审，覆盖正确性、契约、验收。
+- `subagent_type: paseo-reviewer-b`：diff 跨 ≥3 文件或含安全/并发改动时做定向复审，只审安全/数据丢失/并发/已有测试被削弱四个维度，不重复 A 已覆盖的内容；A 报了 High 时逐条证伪，只有给出具体反证才降级——沉默不是否认。B 路 prompt 必须写明 `mode=dimension` 或 `mode=refute`；refute 把该 unit 所有 High 放进同一次调用，逐条给结论。
+- prompt 包含：`worktree=<绝对路径>`、`基线=<sha>`、unit 全文、验收命令与最近一次输出，以及下面的输出格式。只给指针和原文，不写主脑的怀疑、倾向或上轮结论；证伪 prompt 例外，只附被质疑的那条 finding。
 - 评审器自己跑 `git -C <worktree> diff --no-color <基线>..HEAD` 取 diff，不把 diff 塞进主脑上下文。
 
 输出要求（写进 prompt）：
@@ -199,6 +207,8 @@ verdict: accept | repair | escalate
 
 severity 定义：High（明显 bug/安全/数据丢失）、Medium（错误处理缺口/性能）、Low（nit，不进修复）。只要 verdict 行和 JSON 行，不要围栏、不要前言、不要总结。
 
+证伪模式只输出每条 finding 一行：`{"finding":"<原 claim 摘要>","result":"refuted|upheld","evidence":"..."}`，不给 verdict。
+
 评审器没有 Write/Edit，Bash 只用于读 diff 和跑只读命令；评审后宿主仍要查一次 `git -C "$WT" status --porcelain`，有输出说明它动了工作区，丢弃本轮结论并重跑。
 
 解析时按行过滤 `^verdict:` 和 `^{`；两样都找不到就判 `escalate`，别猜。
@@ -209,28 +219,34 @@ severity 定义：High（明显 bug/安全/数据丢失）、Medium（错误处�
 - `repair` → findings 回传原 worker
 - `escalate`（需求冲突 / 权限边界 / 架构取舍 / 连续失败）→ 冻结该 unit，写汇报
 - 主脑不能丢弃 High：要么进修复，要么在汇报里逐条写不修的具体理由；Medium 可降级但必须留痕
+- B 路报的 finding 与 A 路同级对待：High 必须进修复或写不修理由，Medium 留痕；B 路 verdict 不覆盖 A 路，findings 合并后由主脑裁决
 
-两路评审仅在 High 涉及安全/并发时启用：另起 `paseo-reviewer-b`（异构模型）。只有第二路给出具体反证才降级，没提就保留原级——沉默不是否认。
+B 路没跑、或没给出具体反证 → 该 High 原级保留，必须进修复或在汇报里写不修理由。
 
 ## 5. 收敛阶段
 
 findings 回传**原 agent**（复用上下文，比新 worker 准）：
 
 ```bash
-paseo send "$id" --no-wait --prompt '评审 verdict=repair。逐条修复以下 findings，不动清单外文件，改完重跑 <验收命令> 并贴输出：<JSON findings>'
+paseo send "$id" --no-wait --prompt '评审 verdict=repair。逐条修复以下 findings，不动清单外文件、不改已有测试，改完重跑 <验收命令> 并贴输出：<JSON findings>'
 paseo wait "$id" --timeout 900
 ```
+
+每轮修完先重跑 §4.1 的整套门禁（验收 / 越界 / `git status --porcelain` / 已有测试核对），全绿才允许复审；红的不进复审，按 §3 分类。
 
 上限：
 
 - 每条 finding ≤2 次修复
 - 每个 unit ≤2 轮 review-fix
 - 同一验收命令连续 2 次红 → 冻结
+- 整链 ≤3h；连续 2 个 unit 触到上限 → 整链停，写 `ESCALATE`
 
 到限仍有 High → `paseo stop "$id"`，冻结，剩余 findings 连同 worktree 路径写进汇报。
 Medium 未清不阻塞合并，但必须写进汇报；Low 静默丢弃。
 
-修复后复审用 `SendMessage` 回到同一个 `paseo-reviewer-a`（Agent 调用返回的 agentId 要记下）：它保留上一轮 findings，能逐条核对 `fixed_when`。丢了 agentId 就新起一路，并把上轮 findings 一起给它。
+每轮评审结果存 `$TASK_DIR/review/<unit>-<round>.md`（verdict + findings + 门禁输出），复审和续跑都以文件为准。
+
+修复后复审用 `SendMessage` 回到同一个 `paseo-reviewer-a`（Agent 调用返回的 agentId 要记下）：它保留上一轮 findings，能逐条核对 `fixed_when`。丢了 agentId 就新起一路，并把 `$TASK_DIR/review/` 里的上轮 findings 一起给它。
 
 全部 unit 收敛后清理并汇报：
 
@@ -239,7 +255,11 @@ paseo delete <每个 id>                      # 只删 agent
 paseo workspace archive <每个 wks_id>        # 才清 worktree
 ```
 
-向用户汇报——每 unit 一行（agent id/分支/评审轮数/verdict/结果），冻结的单独说，合并时机留给用户（repo 本体从未被触碰）。
+向用户汇报——每 unit 一行（agent id/分支/评审轮数/verdict/门禁结果/结果），冻结的单独说，合并时机留给用户（repo 本体从未被触碰）。
+
+## 6. 收尾与沉淀
+
+汇报后把本链的踩坑追加进 `$HOME/data/paseo-flow/lessons.md`：路由误判（降错档）、评审误报或漏报、worker 反复卡点。同类任务 §1 前先读最近一份。改本 skill 的规则要先 propose（写清证据与影响面），跑任务时不许顺手改流程。
 
 ## 速查触发词
 

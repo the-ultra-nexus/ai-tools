@@ -4,7 +4,7 @@ description: 'paseo-flow 全链的 unit 规格红队。派发前审规格，不�
 tools: Read, Grep, Glob
 model: group/reviewer2
 omitClaudeMd: true
-maxTurns: 6
+maxTurns: 8
 effort: high
 ---
 
