@@ -11,6 +11,7 @@
 | `skills/flashcard/scripts/tts-flashcard.sh` | 发音生成（edge-tts 微软 Christopher 美音，失败降级 `say`；输出目录由调用方传入） |
 | `skills/deepseek-web-search/SKILL.md` | DeepSeek 搜索 skill：参数、查询操作符、结果解读、限流与计费 |
 | `skills/deepseek-web-search/scripts/search.py` | `/v1/tools/search` 客户端，纯标准库，凭证读 `DEEPSEEK_API_KEY` |
+| `skills/ao-flow/SKILL.md` | 无人值守多 agent 编码流 skill：Orchestrator.inc daemon 管 pi worker（worktree 隔离），宿主 agent 代跑 ocr delegate 评审并回传修复直到收敛；含 spawn/轮询熔断/findings 回传协议 |
 | `docs/tts-flashcard.md` | tts 脚本详情（实现、坑、实测记录） |
 | `sync.sh` | 同步 `skills/*` 到 `~/.config/magpie/library/skills/` |
 | `check-frontmatter.sh` | 校验 `skills/*/SKILL.md` 的 YAML frontmatter（name/description 存在且可解析） |
