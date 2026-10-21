@@ -18,24 +18,21 @@ argument-hint: "<任务描述>"
 
 拿不准就按全链走——设计阶段多余的成本远小于错误方案返工。
 
-## 1. 设计阶段（多模型并行 + 交叉验证）
+## 1. 设计阶段（Claude 原生 subagent 并行 + 交叉验证）
 
-用 **Workflow tool** 起后台编排（用户带 ultracode 关键词或直接说"多模型设计"时必须走这段）。pi 子进程调用模板（本机实测）：
+用 **Agent tool** 起多个原生 subagent 并行设计（不是 pi 子进程——实测 pi 长输出在编排里会超时返回空，原生 subagent 稳定且每个自带隔离上下文）。编排形状：
+
+1. **N 路 lens 并行调研**：单条消息里发 N 个 Agent 调用（同 run 并行），每个 subagent 一个独立视角（如官方生态路线/通用框架路线/评审验证路线），prompt 自带完整背景（subagent 间不共享上下文）。subagent 有全工具权限：允许并鼓励它们实际跑 `--help`、读源码、联网查证。
+2. **主脑汇总调研**：分歧点显式标注（某结论 2:1 就是决策信息），不强行统一。
+3. **N 路独立起草**：再起 N 个 subagent 各出一版设计，互相看得到汇总调研、看不到对方草案。
+4. **交叉验证（关键，不可省）**：再起 1-2 个 subagent 当苛刻评审，对草案的**技术主张逐条 refute**——命令行参数是否真实存在（跑 `--help` 验证）、语义是否写反、流程是否断链。不信草案原文。
+5. **主脑合成**：结构取最优草案，事实细节以验证结论钉死；分歧保留进 research.md。
+
+subagent 的最终文本就是返回值，要求它们直接输出数据/结构化 markdown，不写给人看的客套。**pi 模型池仍可用于对抗二审（§4）与轻量咨询**（短输出场景实测稳定）：
 
 ```bash
-cd <repo> && pi -p -nc --no-tools --no-session --model '<model-id>' '<escaped-prompt>'
+cd <repo> && pi -p -nc --no-tools --no-session --model 'commandcode-plan/xai/grok-4.7' '<短咨询或二审 prompt>'
 ```
-
-可用模型池（magpie，免费异构）：`commandcode-plan/meta/muse-spark-1.3`、`commandcode-plan/xai/grok-4.7`、`group/glm`、`group/free`。
-
-编排形状（workflow-authoring 的 pipeline/judge panel 模式）：
-
-1. **N 路 lens 并行调研**：每个模型一个独立视角（如官方生态路线/通用框架路线/评审验证路线），prompt 自带完整背景（子进程间不共享上下文）。
-2. **各模型独立起草**：互相能看到调研结论、看不到对方草案。
-3. **交叉验证（关键，不可省）**：换一个模型对草案的**技术主张逐条 refute**——命令行参数是否真实存在、语义是否写反、流程是否断链。验证者应实际跑 `--help` 查证，不信草案原文。
-4. **主脑合成**：结构取最优草案，事实细节以验证结论钉死；三方分歧点显式保留，不强行统一。
-
-**pi 输出是纯文本不是 JSON**：主脑侧用正则 `/\{[\s\S]*\}/` 提取首个 JSON 对象容错解析；长 prompt 下 pi 可能超时返回空——agent 结果要 `.filter(Boolean)`，空的那路跳过或重试一次。
 
 产出落盘：`sessions/<task-id>/research.md`（含分歧点）+ 设计草案存档。
 
