@@ -1,6 +1,6 @@
 ---
 name: deepseek-web-search
-description: DeepSeek 联网搜索 API（/v1/tools/search），返回带 rerank_score、authority、date 加权的网页结果，支持 site:/lang:/after: 等查询操作符。需要联网事实、时效信息、出处求证时使用。凭证为环境变量 DEEPSEEK_API_KEY。收费 API（$0.75/千次成功请求，仅 HTTP 200 且结果非空才计费），账户级 100 QPS 限流。
+description: 'DeepSeek 联网搜索 API（/v1/tools/search），返回带 rerank_score、authority、date 加权的网页结果，支持 site:/lang:/after: 等查询操作符。需要联网事实、时效信息、出处求证时使用。凭证为环境变量 DEEPSEEK_API_KEY。收费 API（$0.75/千次成功请求，仅 HTTP 200 且结果非空才计费），账户级 100 QPS 限流。'
 argument-hint: "<查询词> [-c N] [--need-content] [--ori-question <原始问题>]"
 ---
 
