@@ -11,10 +11,11 @@
 | `skills/flashcard/scripts/tts-flashcard.sh` | 发音生成（edge-tts 微软 Christopher 美音，失败降级 `say`；输出目录由调用方传入） |
 | `skills/deepseek-web-search/SKILL.md` | DeepSeek 搜索 skill：参数、查询操作符、结果解读、限流与计费 |
 | `skills/deepseek-web-search/scripts/search.py` | `/v1/tools/search` 客户端，纯标准库，凭证读 `DEEPSEEK_API_KEY` |
-| `skills/paseo-flow/SKILL.md` | 主脑编排的全自动多 agent 编码流 skill：Claude 原生 subagent 并行设计+交叉验证 → 主脑合成拆 task units → Paseo daemon 管 pi worker（worktree 隔离）执行 → ocr delegate 评审（含对抗二审）→ findings 回传原 agent 修复到收敛；含路由（大任务全链/小任务短链/纯咨询只设计）、按输出上限定岗的模型分配表、pi/paseo 调用模板与踩坑速查 |
+| `skills/paseo-flow/SKILL.md` | 主脑编排的全自动多 agent 编码流 skill：主脑设计 → 两个原生 subagent（不同模型）并行调研 → 拆 task units → 规格红队审 unit → Paseo daemon 管 pi worker（worktree 隔离）执行 → 冷评审 subagent 只出 verdict+findings → 有界修复到收敛；含降档路由、agent 定义、paseo 调用模板与踩坑速查 |
+| `skills/paseo-flow/agents/*.md` | 五个 Claude 原生 subagent 定义：调研 A/B 路、评审 A/B 路、规格红队（异构模型，`omitClaudeMd`，评审/红队只读） |
 | `docs/tts-flashcard.md` | tts 脚本详情（实现、坑、实测记录） |
-| `sync.sh` | 同步 `skills/*` 到 `~/.config/magpie/library/skills/` |
-| `check-frontmatter.sh` | 校验 `skills/*/SKILL.md` 的 YAML frontmatter（name/description 存在且可解析） |
+| `sync.sh` | 同步 `skills/*` 到 `~/.config/magpie/library/skills/`，并把 `skills/*/agents/` 同步到 `~/.claude/agents/<skill>/` |
+| `check-frontmatter.sh` | 校验 `skills/*/SKILL.md` 与 `skills/*/agents/*.md` 的 YAML frontmatter（name/description 存在且可解析） |
 
 ## 同步
 
@@ -24,6 +25,8 @@
 ```
 
 用 `rsync -a --delete`：仓库里删掉的文件也会从 library 一并删除。
+
+`skills/*/agents/` 会同步到 `~/.claude/agents/<skill>/`；已有目录热加载，新建目录后需重启一次 Claude Code。
 
 `check-frontmatter.sh` 防的是这类事故：`description` 未加引号且含 `冒号+空格`（如 `site:/lang:/after:`）时，YAML 会报
 `Nested mappings are not allowed in compact mappings`，pi 加载 skill 时直接把整个文件丢弃（启动时显示 `[Skill conflicts]`）。

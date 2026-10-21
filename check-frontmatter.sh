@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# 校验 skills/*/SKILL.md 的 YAML frontmatter：必须含 name/description，且能被 YAML 解析。
+# 校验 skills/*/SKILL.md 与 skills/*/agents/*.md 的 YAML frontmatter：必须含 name/description，且能被 YAML 解析。
 # 未加引号的 description 里含 ": "（如查询操作符 site:/after:）会让 YAML 报
 # "Nested mappings are not allowed in compact mappings"，pi 加载时直接丢弃该 skill。
 # exit code 1 表示有不合法文件（供 git pre-commit hook 使用）。
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")" && pwd)"
 fail=0
-for f in "$REPO"/skills/*/SKILL.md; do
+for f in "$REPO"/skills/*/SKILL.md "$REPO"/skills/*/agents/*.md; do
   [ -e "$f" ] || continue
   out="$(python3 - "$f" <<'PY'
 import re, sys

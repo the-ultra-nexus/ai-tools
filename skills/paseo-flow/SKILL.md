@@ -1,80 +1,95 @@
 ---
 name: paseo-flow
-description: '主脑编排的全自动多 agent 编码流（设计→拆分→执行→评审→收敛）：设计由主脑自己出，缺外部事实时用 claude 子进程两路并行调研+交叉验证，主脑合成 TASK_SPEC 拆 task units，Paseo daemon 管 pi worker（worktree 隔离）执行，宿主代跑 ocr delegate 评审并回传修复。大任务走全链，小任务自动跳到执行链。适用于"这事交给 agent 群做，我不参与，随时可打断"的完整委托。前置依赖：paseo CLI + daemon、pi 已登录、ocr 已装、claude CLI 已接 magpie 网关。'
+description: '主脑编排的全自动多 agent 编码流（设计→拆分→执行→评审→收敛）：设计由主脑自己出，缺外部事实时用两个原生 subagent（paseo-researcher-a/b，不同模型）并行调研+交叉验证，主脑合成 TASK_SPEC 拆 task units，全链派发前用 paseo-plan-critic 审 unit 规格，Paseo daemon 管 pi worker（worktree 隔离）执行，冷评审由原生 subagent（paseo-reviewer-a/b，不同模型）只输出 verdict+findings，主脑裁决，有界修复，人合并。拿不准降档走短链。前置依赖：paseo CLI + daemon、pi 已登录、ocr 已装、claude CLI 已接 magpie 网关、本 skill 的 agents/ 已同步到 ~/.claude/agents/paseo-flow/。'
 argument-hint: "<任务描述>"
 ---
 
 # paseo-flow：主脑编排的多 agent 全链编码流
 
-驱动者是本会话（Claude 主脑）。用户一次指令，全程零参与、零反问；用户随时 Esc/打字打断。本 skill 是路由+协议：按任务规模选链，各阶段照章执行，产物落盘可审计。
+驱动者是本会话（Claude 主脑）。用户一次指令，全程零参与、零反问；随时 Esc/打字打断。本 skill 是路由 + 协议：按任务规模选链，各阶段照章执行，产物落盘可审计。
 
-## 角色分配（按模型输出上限定岗）
+## 角色分配
 
-| 角色 | 模型 | 干什么 | 为什么是它 |
-|---|---|---|---|
-| 主脑 | 本会话 | 路由、合成、拆 unit、评审推理、收敛决策 | 唯一有全局上下文，不外包 |
-| 设计（方案成型 + 交叉验证） | 本会话（主脑） | 初始信息、技术路线、取舍，拿回的事实逐条钉死 | 唯一有全局上下文，设计不外包 |
-| 调研子进程 | `claude -p --model group/reviewer1` / `group/reviewer2` | 并行搜外部事实、跑 `--help`、读源码、refute 结论 | 全权限（MCP 搜索 + WebSearch + Skill + Bash），两路同题互为对照 |
-| 执行 worker | `paseo run --provider pi --model magpie/group/worker` | worktree 内写代码、跑验收、修 findings | 输出上限 384k，独占 worktree |
-| 对抗二审（默认） | `claude -p --model group/reviewer1` | 只看 High 的短裁决 | 输出上限 32k，逼它短，天然适合「只报 High」 |
-| 深度二审（大 diff） | `claude -p --model group/reviewer2` | 跨多文件/安全/并发 diff 复审 | 输出上限 131k，能铺开讲 |
-| 单点咨询 | `claude -p --model group/worker` | 技术选型问一句、方案抽查 | 短问短答不挑模型，直接复用执行角色，少记一个名字 |
+| 角色 | 模型 | 干什么 |
+|---|---|---|
+| 主脑 | 本会话 | 路由、设计、拆 unit、裁决 verdict、收敛决策 |
+| 调研 subagent | `paseo-researcher-a` / `-b`（定义内写死 `group/reviewer1` / `reviewer2`） | 缺外部事实时两路并行调研、跑 `--help`、读源码、refute 结论 |
+| 规格红队 | `paseo-plan-critic`（`group/reviewer2`） | 全链派发前审 unit 规格，不审代码 |
+| 执行 worker | `paseo run --provider pi --model magpie/group/worker` | worktree 内实现、跑验收、修 findings |
+| 评审 subagent | `paseo-reviewer-a` / `-b`（定义内写死 `group/reviewer1` / `reviewer2`） | 冷评审，只输出 verdict + findings |
 
-分工铁律：**pi 只负责 §3 的 worker 代码生成**（由 paseo daemon 拉起）；评审与咨询一律走 `claude -p` 子进程直连 magpie 别名。
+pi 只跑 §3 的 worker（由 paseo daemon 拉起）；调研与评审走 Claude 原生 subagent，模型写在各 agent 定义的 `model:` 里。
 
-claude 子进程模板（咨询/二审，不进 worktree、不落 session、不带工具）：
+agent 定义在 `skills/paseo-flow/agents/`，`./sync.sh` 会同步到 `~/.claude/agents/paseo-flow/`。五个定义都设了 `omitClaudeMd: true`；评审器是 `Read, Grep, Glob, Bash`，规格红队是 `Read, Grep, Glob`，调研器没有 `Edit` 和 `Agent`。
+
+**无会话/脚本场景的后备**（cron、`claude -p` 里再套一层、或 agent 定义不可用时）：
 
 ```bash
-git --no-pager diff --no-color HEAD~1..HEAD | claude -p --bare --tools '' \
+git --no-pager diff --no-color <基线>..HEAD | claude -p --bare --tools 'Read,Grep,Glob' \
   --no-session-persistence --model 'group/reviewer1' '<prompt>'
 ```
 
-- `--bare` 跳过 CLAUDE.md/hooks/MCP/插件：同一问实测 60s+ → 3~4s，评审循环里这差价很致命。
-- `--tools ''` 等价 pi 的 `--no-tools`；要它自己读仓库就换成 `--tools 'Read,Bash,Grep,Glob'`。
-- stderr 会打一行 `[claude-code:unrecognized_model] {"model":"group/reviewer1",...}`——magpie 别名不在 CLI 的模型表里，属无害噪声，stdout 干净，别 `2>&1` 把噪声混进评审结论。
+- `--bare` 跳过 CLAUDE.md/hooks/MCP/插件：同一问实测 60s+ → 3~4s。原生 subagent 没有等价的 bare 开关，只能靠 `omitClaudeMd` 少加载 CLAUDE.md。
+- stderr 会打一行 `[claude-code:unrecognized_model] {"model":"group/reviewer1",...}`——magpie 别名不在 CLI 的模型表里，属无害噪声。原生 subagent 也会打同一行。
+- 别名能进 agent 定义且真的路由（`modelUsage.canonicalModel` 实测为 `group/reviewer1`）。但组织 `availableModels` 允许列表若拦下这个值，会静默换成别的模型；换网关后先核对一次实际模型。
 
-## 0. 路由（第一件事，判断走哪条链）
+## 0. 路由
 
 | 信号 | 链路 |
 |---|---|
-| 单文件/验收命令明确/方案无争议 | **短链**：直接 §3 执行 → §4 评审 → §5 收敛 |
-| 多模块/方案未定/技术选型/重构级 | **全链**：§1 设计 → §2 拆分 → §3 → §4 → §5 |
-| 纯咨询（只想要方案不要代码） | 只走 §1 §2，输出 TASK_SPEC 落档即收 |
+| 单文件 / 验收命令明确 / 方案无争议 | **短链**：§3 执行 → §4 评审 → §5 收敛 |
+| 多模块 / 方案未定 / 技术选型 / 重构级 | **全链**：§1 设计 → §2 拆分 → §3 → §4 → §5 |
 
-拿不准就按全链走——设计阶段多余的成本远小于错误方案返工。
+**拿不准就降一档走短链**，在汇报里写一句「按短链走，理由 X」。
+
+- 短链出现 High、越界，或同一验收命令连续两次红 → 下一轮升全链。
+- 连续两次短链零 findings 且一次通过 → 同规模任务继续走短链。
+
+任务一开始就钉死 `TASK_DIR="$(pwd)/sessions/<task-id>"`；后文所有落盘都用 `$TASK_DIR` 绝对路径。§4 会 cd 进 worktree，相对路径会把文件写进别人的分支。
 
 ## 1. 设计阶段（主脑出方案，调研才外包）
 
-**方案由主脑自己出**——初始信息、技术路线、取舍、接口形态全在本会话里成型，不开子进程做设计：设计的价值就在全局上下文，外包等于把它丢了。
+**方案由主脑自己出**——初始信息、技术路线、取舍、接口形态全在本会话里成型，不外包设计：设计的价值就在全局上下文，交出去等于把它丢了。
 
-只有「缺外部事实」时才起 claude 子进程调研：一条消息里发两个 Bash 调用并行跑，两路同题、各搜各的。
+只有「缺外部事实」时才起 subagent 调研：**一条消息里并行发两个 Agent 调用**，两路同题、各搜各的。
 
-```bash
-claude -p --model 'group/reviewer1' --permission-mode bypassPermissions \
-  --no-session-persistence '<调研问题：要哪些事实、什么格式、要几条来源、每条必须带链接>'
+- `subagent_type: paseo-researcher-a`，prompt 写清：要哪些事实、什么格式、要几条来源、每条必须带链接，产出写到 `$TASK_DIR/research-a.md`。
+- `subagent_type: paseo-researcher-b`，同一个问题，产出写到 `$TASK_DIR/research-b.md`。
+- 两个定义模型不同、上下文独立，互不可见；主脑只读两份文件，不把全文吞进上下文。
 
-claude -p --model 'group/reviewer2' --permission-mode bypassPermissions \
-  --no-session-persistence '<同一个问题，换一路搜>'
-```
+约束：
 
-- **权限给满**：`--permission-mode bypassPermissions` 下 MCP 搜索（anysearch/tavily/exa/context7）、WebSearch/WebFetch、Skill、Bash 全在手，不需要 `--allowedTools`。反过来 **绝不能加 `--bare`**——bare 把 MCP 与 WebSearch/WebFetch 一并砍掉，只剩 Bash/Edit/Read，调研直接瘸。
-- 逼子进程自己核实：跑 `--help`、读源码、点开 URL、多来源交叉；交回来的必须是「结论 + 出处」，没出处的事实一律记为未验证。
-- 子进程有全权限，也就有 Write/Edit 的能力——调研要在干净的 cwd 里跑，别让它站在待改的仓库上。
+- 逼 subagent 自己核实：跑 `--help`、读源码、点开 URL、多来源交叉；交回来的必须是「结论 + 出处」，没出处的事实一律记为未验证。
+- 调研器没有 `Edit`/`Agent`，但有 `Write`——只许写 `$TASK_DIR/research-*.md`，别动仓库源码。
 - **不要让 pi 做调研或长输出**（实测超时返空）；pi 只归 §3 的 worker。
-- 两路回来由主脑汇总：一致的钉成事实，分歧保留进 research.md——分歧本身就是决策信息，不强行统一。交叉验证也在主脑这层做：逐条问「出自哪、哪个版本、现在还成立吗」。
+- 两路回来由主脑汇总：一致的钉成事实，分歧保留进 `research.md`——分歧本身就是决策信息，不强行统一。交叉验证也在主脑这层做：逐条问「出自哪、哪个版本、现在还成立吗」。
 
-产出落盘：`sessions/<task-id>/research.md`（含分歧点与未验证项）。
+产出落盘：`$TASK_DIR/research-a.md`、`research-b.md`，汇总写 `$TASK_DIR/research.md`（含分歧点与未验证项）；设计本身写 `$TASK_DIR/design.md`（目标、取舍、接口形态、非目标），后面红队和 worker 都拿它当指针。
 
-## 2. 拆分阶段（主脑独占，不开子进程）
+## 2. 拆分阶段（主脑独占，不外包）
 
-合成结果拆成 **task units**，每个 unit 一个文件 `sessions/<task-id>/units/<n>-<slug>.md`，必含：
+合成结果拆成 **task units**，每个 unit 一个文件 `$TASK_DIR/units/<n>-<slug>.md`，必含：
 
 - **目标**：一句话可验收的结果
-- **文件清单**：只许动这些
+- **基线**：起始 commit
+- **契约**：导出签名、数据结构、错误语义；并行 unit 的接口以这里为准
+- **文件清单**：只许动这些；§3 用 `git diff --name-only` 对照，越界即停
 - **验收命令**：命令行可判定（`node test.js` / `npm test`），没有验收命令的 unit 不许派发
+- **测试证据**：新增/修改的测试必须在实现前跑红一次；新测试文件可以先复制到基线 worktree 跑。红输出由 worker 在第一步产出并回传，§4 核对
 - **依赖边**：依赖哪个 unit；无依赖的并行派，有依赖的串行等
+- **必读**：design.md、research.md、现有实现路径；只给指针，不复制全文
+- **非目标**：明确不做什么，防止顺手重构
 
-拆分原则：tracer-bullet（一条票一个端到端可验证的弹道），宁粗勿细——3 个大 unit 好过 9 个碎 unit。并行 worker ≤ 3。
+拆分原则：tracer-bullet（一条票一个端到端可验证的弹道），宁粗勿细——3 个大 unit 好过 9 个碎 unit。并行 worker ≤ 3，改同一文件的工作不并行。
+
+unit 全部写完后，全链在派发前跑一次规格红队（短链跳过）：
+
+- `subagent_type: paseo-plan-critic`
+- prompt 只给指针：`units_dir=$TASK_DIR/units`、`design=$TASK_DIR/design.md`、`repo=<绝对路径>`；主脑不复制全文。
+- 输出 `verdict: pass | revise`，findings 每条带 `unit` 字段。
+- High（验收命令测不出目标 / 契约矛盾 / 依赖成环 / 并行 unit 改同一文件）必须改完 unit 才能进 §3；Medium 记进汇报，不阻塞。
+- 红队报的 High，主脑要么改 unit，要么在汇报里写不修的具体理由；不许静默放过。
+- 红队只审规格，不审代码；它说 pass 也不代表实现是对的，§4 照跑。
 
 ## 3. 执行阶段（Paseo daemon + pi workers）
 
@@ -86,14 +101,22 @@ paseo status | grep -q 'localDaemon: running' || paseo daemon start
 
 每个 unit（在目标 repo 根目录下）：
 
+有依赖边的 unit 必须 `--base <上游 unit 分支>` 从上游分支开；默认的 branch-off 从 repo HEAD 开，会看不到上游改动。
+
 ```bash
 cd <repo>
 id=$(paseo run --quiet --provider pi --model magpie/group/worker \
   --new-workspace worktree --worktree-mode branch-off --new-branch <unit分支> \
-  --title '<unit短名>' --no-wait '<unit 全文：目标+文件+验收命令+禁区>')
+  --title '<unit短名>' --no-wait '<unit 全文：目标+基线+契约+文件清单+验收命令+测试证据+依赖+必读+非目标>')
 ```
 
 `paseo run` 的 prompt 就是初始任务，agent 立即开干（不像 ao 需要 send 推一把）。`--quiet` 的 stdout 只有 agent id，workspace 提示走 stderr，`id=$(...)` 安全。
+
+跑完先查 id 非空，别拿空字符串去 inspect：
+
+```bash
+[ -n "$id" ] || { echo 'paseo run 没有返回 id'; exit 1; }
+```
 
 拿 worktree 路径（**别假设，先问 daemon**）：
 
@@ -107,20 +130,34 @@ WT=$(paseo inspect "$id" --json | python3 -c 'import json,sys; print(json.load(s
 paseo wait "$id" --timeout 900
 ```
 
-超时不等于失败：先 `paseo send "$id" --no-wait --prompt '汇报当前进度与卡点'`，再决定继续等或 `paseo stop "$id"`。
+超时不等于失败：先 `paseo send "$id" --no-wait --prompt '汇报当前进度与卡点'`，再决定继续等或 `paseo stop "$id"`。同一 unit 只允许问一次进度。
 
-验收：在 `$WT` 里跑该 unit 的验收命令，红了直接把 stderr 回传同一 agent 修（不用等评审）：
+验收：在 `$WT` 里跑该 unit 的验收命令。
 
 ```bash
-paseo send "$id" --no-wait --prompt '验收失败，stderr 如下：<...>。修复后重跑 <验收命令>。'
-paseo wait "$id" --timeout 900
+cd "$WT" && <验收命令>
 ```
 
-通过则：
+红了先分类，再决定回传：
+
+- 实现错误 → 回传同一 agent 修（不用等评审）：
+  `paseo send "$id" --no-wait --prompt '验收失败，stderr 如下：<...>。修复后重跑 <验收命令>。'`
+- 环境错误 → 重试一次；仍失败冻结。
+- 测试过期 / 契约缺失 → 不自动修，写汇报。
+
+通过则提交：
 
 ```bash
 git -C "$WT" add -A && git -C "$WT" commit -qm '<摘要> (by pi <id前8位>)'
 ```
+
+提交后做越界检查，不通过就不进评审：
+
+```bash
+git -C "$WT" diff --name-only <基线>..HEAD
+```
+
+出现 unit 文件清单外的路径 → `paseo stop "$id"`，冻结，写进汇报。
 
 踩坑速查：
 - pi provider 不支持 `--mode`：它的 `listModes` 返回空数组（源码 `providers/pi/agent.js` 里 `return { models, modes: [] }`），传了会被 daemon 以 `Invalid mode ... Available modes: (none)` 拒绝。`--mode` 管的是 agent 的行为模式（plan/bypass 这类），跟 `--model` 是两条路：`--model` 由 paseo 拼进 `pi --mode rpc --model <model>` 的 argv，模型照传不误。
@@ -129,37 +166,71 @@ git -C "$WT" add -A && git -C "$WT" commit -qm '<摘要> (by pi <id前8位>)'
 - GUI 关闭 ≠ daemon 退出；daemon 挂了只会是 `paseo status` 报不可达。
 - repo 必须已有至少一个提交，否则 worktree 建不出来。
 
-## 4. 评审阶段（宿主代跑 ocr delegate + 对抗二审）
+## 4. 评审阶段（冷评审 + 主脑裁决）
+
+评审由独立 subagent 做，主脑不评自己写的 spec。
+
+1）宿主跑确定性检查：
 
 ```bash
 cd "$WT"
-ocr delegate preview --format json --from HEAD~1 --to HEAD   # 已 commit 必须用 range/commit 模式
+ocr delegate preview --format json --from <基线> --to HEAD
 ocr delegate rule --format json <files...>
-git --no-pager diff --no-ext-diff --no-textconv --no-color HEAD~1..HEAD -- "<path>"
+git -C "$WT" --no-pager diff --no-ext-diff --no-textconv --no-color <基线>..HEAD > "$TASK_DIR/<unit>.diff"
+git -C "$WT" diff --name-only <基线>..HEAD          # 越界
+<验收命令>                                           # 在 worktree 里重跑
 ```
 
-**评审推理由本会话完成**：对照 rule 组 checklist 逐条过 diff 新增行，输出结构化 findings（path/line/severity/fix）。severity：High（明显 bug/安全/数据丢失）、Medium（错误处理缺口/性能）、Low（nit，静默丢弃）。覆盖强制：preview 每个 `(path,status)` 标记 reviewed/skipped（带原因）。
+2）冷评审 subagent（新上下文，只看 unit 全文和仓库里的 diff，不看 worker 自述）：
 
-**对抗二审（大任务启用）**：High 涉及安全/并发/核心逻辑时，另起异构模型看同一 diff 再评一遍——默认 `reviewer1` 只要 High，diff 跨多文件或要展开推理时换 `reviewer2`：
+一条消息里起评审；默认只发 A 路，diff 跨 ≥3 文件或含安全/并发改动时再发 B 路：
 
-```bash
-git --no-pager diff --no-color HEAD~1..HEAD | claude -p --bare --tools '' \
-  --no-session-persistence --model 'group/reviewer1' \
-  '只报 High 级问题，逐条给 path:line 与修复建议，无则回复 NONE。diff 如下：'
+- `subagent_type: paseo-reviewer-a`
+- prompt 包含：`worktree=<绝对路径>`、`基线=<sha>`、unit 全文、验收命令与最近一次输出，以及下面的输出格式。
+- 评审器自己跑 `git -C <worktree> diff --no-color <基线>..HEAD` 取 diff，不把 diff 塞进主脑上下文。
+
+输出要求（写进 prompt）：
+
+```text
+verdict: accept | repair | escalate
+{"severity":"High","path":"src/x.ts","line":42,"claim":"...","evidence":"...","fixed_when":"..."}
+{"severity":"Medium","path":"src/y.ts","line":7,"claim":"...","evidence":"...","fixed_when":"..."}
 ```
 
-两路都报的才进修复，单路报的降级 Medium。
+severity 定义：High（明显 bug/安全/数据丢失）、Medium（错误处理缺口/性能）、Low（nit，不进修复）。只要 verdict 行和 JSON 行，不要围栏、不要前言、不要总结。
+
+评审器没有 Write/Edit，Bash 只用于读 diff 和跑只读命令；评审后宿主仍要查一次 `git -C "$WT" status --porcelain`，有输出说明它动了工作区，丢弃本轮结论并重跑。
+
+解析时按行过滤 `^verdict:` 和 `^{`；两样都找不到就判 `escalate`，别猜。
+
+3）主脑只做裁决：
+
+- `accept` 且确定性检查全绿 → 进 §5 收尾
+- `repair` → findings 回传原 worker
+- `escalate`（需求冲突 / 权限边界 / 架构取舍 / 连续失败）→ 冻结该 unit，写汇报
+- 主脑不能丢弃 High：要么进修复，要么在汇报里逐条写不修的具体理由；Medium 可降级但必须留痕
+
+两路评审仅在 High 涉及安全/并发时启用：另起 `paseo-reviewer-b`（异构模型）。只有第二路给出具体反证才降级，没提就保留原级——沉默不是否认。
 
 ## 5. 收敛阶段
 
 findings 回传**原 agent**（复用上下文，比新 worker 准）：
 
 ```bash
-paseo send "$id" --no-wait --prompt '代码评审发现 N 个问题：1. [High] <path>:<line> <问题>——<fix> ... 请逐条修复，不动无关代码，改完跑 <验收命令>。'
+paseo send "$id" --no-wait --prompt '评审 verdict=repair。逐条修复以下 findings，不动清单外文件，改完重跑 <验收命令> 并贴输出：<JSON findings>'
 paseo wait "$id" --timeout 900
 ```
 
-循环 §3 等待→提交→§4 二审，直到 High/Medium 全清或 **max-rounds=2**；到顶仍有 High → 冻结该 unit，`paseo stop "$id"`，剩余 findings 连同 worktree 路径写进汇报。
+上限：
+
+- 每条 finding ≤2 次修复
+- 每个 unit ≤2 轮 review-fix
+- 同一验收命令连续 2 次红 → 冻结
+
+到限仍有 High → `paseo stop "$id"`，冻结，剩余 findings 连同 worktree 路径写进汇报。
+Medium 未清不阻塞合并，但必须写进汇报；Low 静默丢弃。
+
+修复后复审用 `SendMessage` 回到同一个 `paseo-reviewer-a`（Agent 调用返回的 agentId 要记下）：它保留上一轮 findings，能逐条核对 `fixed_when`。丢了 agentId 就新起一路，并把上轮 findings 一起给它。
 
 全部 unit 收敛后清理并汇报：
 
@@ -168,11 +239,11 @@ paseo delete <每个 id>                      # 只删 agent
 paseo workspace archive <每个 wks_id>        # 才清 worktree
 ```
 
-向用户汇报——每 unit 一行（agent id/分支/评审轮数/结果），冻结的单独说，合并时机留给用户（repo 本体从未被触碰）。
+向用户汇报——每 unit 一行（agent id/分支/评审轮数/verdict/结果），冻结的单独说，合并时机留给用户（repo 本体从未被触碰）。
 
 ## 速查触发词
 
 - "这事交给 agent 做"（大任务）→ 全链
 - "把 X 改了并评审"（小任务）→ 短链
-- "多模型设计 X" → §1 §2 后停，落档汇报
 - "并行做这几件事" → §2 拆完无依赖 unit 并行 run
+- "只出方案不写代码" → §1 §2 后停，输出 TASK_SPEC 落档即收
