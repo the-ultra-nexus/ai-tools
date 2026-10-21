@@ -188,13 +188,18 @@ git -C "$WT" diff --name-only <基线>..HEAD          # 越界；触及已有测
 
 任意一项红 → 不进评审：验收红按 §3 分类；越界或已有测试被改 → 冻结并写汇报。
 
+- preview 要为 unit 文件清单里的每个文件给出归属：在 `reviewable_files`，或在 `excluded_files` 且带明确 `exclude_reason`（`unsupported_ext`、排除规则等）。两边都没有 → 冻结写汇报，不要让评审器自己补范围。
+- `reviewable_count` 为 0 时先看 unit 是不是纯文档：纯文档没有可评审代码，照常进评审；unit 含代码却全被排除 → 冻结。
+- preview 的 `files` 和 `ocr delegate rule` 的输出（按文件归并）原样留着，下一步作为 `files`/`rules` 下发。只在宿主跑这一次，不重跑，也不交给 agent 自己选文件。
+
 2）冷评审 subagent（新上下文，只看 unit 全文和仓库里的 diff，不看 worker 自述）：
 
 一条消息里起 A 路；B 路只在两种情况下起，每种各起一次（同一轮最多两次），两次调用上下文互不可见：
 
 - `subagent_type: paseo-reviewer-a`：全量冷评审，覆盖正确性、契约、验收。
 - `subagent_type: paseo-reviewer-b`：diff 跨 ≥3 文件或含安全/并发改动时做定向复审，只审安全/数据丢失/并发/已有测试被削弱四个维度，不重复 A 已覆盖的内容；A 报了 High 时逐条证伪，只有给出具体反证才降级——沉默不是否认。B 路 prompt 必须写明 `mode=dimension` 或 `mode=refute`；refute 把该 unit 所有 High 放进同一次调用，逐条给结论。
-- prompt 包含：`worktree=<绝对路径>`、`基线=<sha>`、unit 全文、验收命令与最近一次输出，以及下面的输出格式。只给指针和原文，不写主脑的怀疑、倾向或上轮结论；证伪 prompt 例外，只附被质疑的那条 finding。
+- prompt 包含：`worktree=<绝对路径>`、`基线=<sha>`、unit 全文、`files=<preview 清单>`、`rules=<rule 输出>`、验收命令与最近一次输出，以及下面的输出格式。只给指针和原文，不写主脑的怀疑、倾向或上轮结论；证伪 prompt 例外，只附被质疑的那条 finding。
+- B 路不带 `files`/`rules`：它只做四维复审或逐条证伪，全量规则清单对它没有用。
 - 评审器自己跑 `git -C <worktree> diff --no-color <基线>..HEAD` 取 diff，不把 diff 塞进主脑上下文。
 
 输出要求（写进 prompt）：
