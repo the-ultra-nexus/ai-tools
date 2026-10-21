@@ -17,7 +17,7 @@ argument-hint: "<任务描述>"
 | 执行 worker | `paseo run --provider pi --model magpie/group/worker` | worktree 内写代码、跑验收、修 findings | 输出上限 384k，独占 worktree |
 | 对抗二审（默认） | `pi --model magpie/group/reviewer1` | 只看 High 的短裁决 | 输出上限 32k，逼它短，天然适合「只报 High」 |
 | 深度二审（大 diff） | `pi --model magpie/group/reviewer2` | 跨多文件/安全/并发 diff 复审 | 输出上限 131k，能铺开讲 |
-| 单点咨询 | `pi --model magpie/group/orchestrator` | 技术选型问一句、方案抽查 | 中短输出，别拿它做长设计（pi 长输出在编排里会超时返空） |
+| 单点咨询 | `pi --model magpie/group/worker` | 技术选型问一句、方案抽查 | 短问短答不挑模型，直接复用执行角色，少记一个名字 |
 
 pi 调用模板（咨询/二审，不进 worktree、不落 session）：
 
@@ -107,7 +107,7 @@ git -C "$WT" add -A && git -C "$WT" commit -qm '<摘要> (by pi <id前8位>)'
 ```
 
 踩坑速查：
-- pi provider 不支持 `--mode`（`Available modes: none`），别传。
+- pi provider 不支持 `--mode`：它的 `listModes` 返回空数组（源码 `providers/pi/agent.js` 里 `return { models, modes: [] }`），传了会被 daemon 以 `Invalid mode ... Available modes: (none)` 拒绝。`--mode` 管的是 agent 的行为模式（plan/bypass 这类），跟 `--model` 是两条路：`--model` 由 paseo 拼进 `pi --mode rpc --model <model>` 的 argv，模型照传不误。
 - `paseo run` 失败也会先建 workspace；重跑用 `--workspace <wks_id>` 复用，别重复建。
 - workspace 找不到就 `paseo workspace ls --json`，按分支名匹配。
 - GUI 关闭 ≠ daemon 退出；daemon 挂了只会是 `paseo status` 报不可达。
