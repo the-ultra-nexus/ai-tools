@@ -2,7 +2,7 @@
 name: paseo-reviewer-a
 description: 'paseo-flow 冷评审 A 路。仅由 paseo-flow 显式点名，不要自动委派。'
 tools: Read, Grep, Glob, Bash
-model: group/reviewer1
+model: hw/group/reviewer1
 omitClaudeMd: true
 maxTurns: 8
 effort: high

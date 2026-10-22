@@ -13,12 +13,14 @@ description: '主脑编排的全自动多 agent 编码流：主脑出设计，�
 | 角色 | 模型 | 干什么 |
 |---|---|---|
 | 主脑 | 本会话 | 路由、设计、拆 unit、裁决 verdict、收敛决策 |
-| 调研 subagent | `paseo-researcher-a` / `-b`（定义内写死 `group/reviewer1` / `reviewer2`） | 缺外部事实时两路并行调研、跑 `--help`、读源码、refute 结论 |
-| 规格红队 | `paseo-plan-critic`（`group/reviewer2`） | 全链派发前审 unit 规格，不审代码 |
-| 执行 worker | `paseo run --provider pi --model magpie/group/worker` | worktree 内实现、跑验收、修 findings |
-| 评审 subagent | `paseo-reviewer-a` / `-b`（定义内写死 `group/reviewer1` / `reviewer2`） | A 路全量冷评审；B 路只做安全/数据丢失/并发/测试削弱维度复审，或对单条 High 证伪 |
+| 调研 subagent | `paseo-researcher-a` / `-b`（定义内写死 `hw/group/reviewer1` / `hw/group/reviewer2`） | 缺外部事实时两路并行调研、跑 `--help`、读源码、refute 结论 |
+| 规格红队 | `paseo-plan-critic`（`hw/group/reviewer2`） | 全链派发前审 unit 规格，不审代码 |
+| 执行 worker | `paseo run --provider pi --model magpie/hw/group/worker` | worktree 内实现、跑验收、修 findings |
+| 评审 subagent | `paseo-reviewer-a` / `-b`（定义内写死 `hw/group/reviewer1` / `hw/group/reviewer2`） | A 路全量冷评审；B 路只做安全/数据丢失/并发/测试削弱维度复审，或对单条 High 证伪 |
 
 pi 只跑 §3 的 worker（由 paseo daemon 拉起）；调研与评审走 Claude 原生 subagent，模型写在各 agent 定义的 `model:` 里。
+
+网关的模型 id 一律带 `hw/` 前缀（`hw/group/worker`、`hw/group/reviewer1` …）。不带前缀的旧别名在 `/v1/messages` 和 `/v1/chat/completions` 上都已 404；pi 的 `--model` 是模式匹配，写 `magpie/group/worker` 会模糊命中 `hw/group/worker` 而看似正常，别依赖这个巧合。
 
 agent 定义在 `skills/paseo-flow/agents/`，`./sync.sh` 会同步到 `~/.claude/agents/paseo-flow/`。五个定义都设了 `omitClaudeMd: true`；评审器是 `Read, Grep, Glob, Bash`，规格红队是 `Read, Grep, Glob`，调研器没有 `Edit` 和 `Agent`。
 
@@ -26,12 +28,12 @@ agent 定义在 `skills/paseo-flow/agents/`，`./sync.sh` 会同步到 `~/.claud
 
 ```bash
 git --no-pager diff --no-color <基线>..HEAD | claude -p --bare --tools 'Read,Grep,Glob' \
-  --no-session-persistence --model 'group/reviewer1' '<prompt>'
+  --no-session-persistence --model 'hw/group/reviewer1' '<prompt>'
 ```
 
 - `--bare` 跳过 CLAUDE.md/hooks/MCP/插件：同一问实测 60s+ → 3~4s。原生 subagent 没有等价的 bare 开关，只能靠 `omitClaudeMd` 少加载 CLAUDE.md。
-- stderr 会打一行 `[claude-code:unrecognized_model] {"model":"group/reviewer1",...}`——magpie 别名不在 CLI 的模型表里，属无害噪声。原生 subagent 也会打同一行。
-- 别名能进 agent 定义且真的路由（`modelUsage.canonicalModel` 实测为 `group/reviewer1`）。但组织 `availableModels` 允许列表若拦下这个值，会静默换成别的模型；换网关后先核对一次实际模型。
+- stderr 会打一行 `[claude-code:unrecognized_model] {"model":"hw/group/reviewer1",...}`——magpie 别名不在 CLI 的模型表里，属无害噪声；去掉 `hw/` 前缀则不是噪声，网关会直接 404、CLI 报模型不可用。原生 subagent 也会打同一行。
+- 别名能进 agent 定义且真的路由（`modelUsage.canonicalModel` 实测为 `hw/group/reviewer1`）。但组织 `availableModels` 允许列表若拦下这个值，会静默换成别的模型；换网关后先核对一次实际模型。
 
 ## 0. 路由
 
@@ -136,7 +138,7 @@ unit 全文已在 `$TASK_DIR/units/<n>-<slug>.md`，派发读文件，不手打�
 
 ```bash
 cd <repo>
-id=$(paseo run --quiet --provider pi --model magpie/group/worker \
+id=$(paseo run --quiet --provider pi --model magpie/hw/group/worker \
   --new-workspace worktree --worktree-mode branch-off \
   --new-branch pf/<task-id>/<n>-<slug> --base <基线ref> \
   --title '<unit短名>' --no-wait "$(cat "$TASK_DIR/units/<n>-<slug>.md")")

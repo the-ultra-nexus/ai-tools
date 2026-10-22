@@ -2,7 +2,7 @@
 name: paseo-researcher-b
 description: 'paseo-flow 调研 B 路，异构模型。与 A 路同题并行，用于交叉验证。'
 disallowedTools: Edit, NotebookEdit, Agent
-model: group/reviewer2
+model: hw/group/reviewer2
 omitClaudeMd: true
 maxTurns: 24
 effort: high

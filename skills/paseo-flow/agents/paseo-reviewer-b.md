@@ -2,7 +2,7 @@
 name: paseo-reviewer-b
 description: 'paseo-flow 对抗复核 B 路，异构模型。两种用法：安全/数据丢失/并发/测试削弱四个维度的定向复审；或对 A 路报的每条 High 逐条证伪。'
 tools: Read, Grep, Glob, Bash
-model: group/reviewer2
+model: hw/group/reviewer2
 omitClaudeMd: true
 maxTurns: 8
 effort: high

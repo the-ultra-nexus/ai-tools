@@ -2,7 +2,7 @@
 name: paseo-plan-critic
 description: 'paseo-flow 全链的 unit 规格红队。派发前审规格，不审代码。'
 tools: Read, Grep, Glob
-model: group/reviewer2
+model: hw/group/reviewer2
 omitClaudeMd: true
 maxTurns: 8
 effort: high

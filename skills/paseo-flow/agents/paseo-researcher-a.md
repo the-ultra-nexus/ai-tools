@@ -2,7 +2,7 @@
 name: paseo-researcher-a
 description: 'paseo-flow 调研 A 路。仅由 paseo-flow 显式点名，不要自动委派。'
 disallowedTools: Edit, NotebookEdit, Agent
-model: group/reviewer1
+model: hw/group/reviewer1
 omitClaudeMd: true
 maxTurns: 24
 effort: high
