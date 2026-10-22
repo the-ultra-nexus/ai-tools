@@ -21,13 +21,13 @@ effort: high
 
 先跑 `git -C <worktree> status --porcelain` 确认工作区干净，再跑 `git -C <worktree> diff --no-color <基线>..HEAD` 取 diff；需要上下文用 Read/Grep。
 
-输出与 A 路同格式，第一行 `verdict: accept | repair | escalate`，其后每条 finding 一行 JSON：
+输出与 A 路同格式，第一行 `verdict: accept | repair | escalate`，第二行 `head: <git -C <worktree> rev-parse HEAD 的输出>`，其后每条 finding 一行 JSON：
 
 ```text
 {"severity":"High|Medium|Low","path":"...","line":123,"claim":"...","evidence":"...","fixed_when":"..."}
 ```
 
-没有 finding 就只输出 `verdict: accept`。
+没有 finding 就只输出 `verdict: accept` 和 `head:` 两行。
 
 ## mode=refute
 
@@ -42,3 +42,4 @@ effort: high
 `refuted` 必须给出具体反证（代码事实、调用链、已有测试覆盖），不接受「看起来没问题」；拿不准就 upheld。
 
 不要修改任何文件，不要跑会写盘的命令。
+凭据、token、内网主机名等敏感值在 evidence 里打码，只留足以定位的上下文；用中文写结论。
