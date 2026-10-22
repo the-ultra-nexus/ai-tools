@@ -2,7 +2,7 @@
 """DeepSeek 联网搜索 API 客户端（纯标准库）。
 
 文档：https://api-docs.deepseek.com/guides/search
-凭证：环境变量 DEEPSEEK_API_KEY
+凭证：~/.config/deepseek/api_key（chmod 600），其次环境变量 DEEPSEEK_API_KEY
 
 示例:
     python3 search.py "DeepSeek V4 发布"
@@ -18,16 +18,30 @@ import urllib.error
 import urllib.request
 
 API_URL = "https://api.deepseek.com/v1/tools/search"
+KEY_FILE = os.path.join(
+    os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "deepseek", "api_key"
+)
 SUMMARY_LIMIT = 1000
 CONTENT_LIMIT = 1000
 HINTS = {
-    401: "API Key 缺失或无效。到 https://platform.deepseek.com 获取后设置 DEEPSEEK_API_KEY。",
+    401: f"API Key 缺失或无效。到 https://platform.deepseek.com 获取后写入 {KEY_FILE}（chmod 600），或设置环境变量 DEEPSEEK_API_KEY。",
     402: "账户余额不足，充值后重试：https://platform.deepseek.com/top_up",
     408: "读取请求体超时，稍等后重试。",
     429: "超出账户级 QPS 限制（搜索 100 QPS，多 key 共享配额），退避几秒后重试。",
     500: "服务端内部错误，稍后重试。",
     504: "下游超时，稍后重试。",
 }
+
+
+def read_api_key():
+    api_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+    if api_key:
+        return api_key
+    try:
+        with open(KEY_FILE, encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
 
 
 def build_body(args):
@@ -119,11 +133,11 @@ def main():
     if args.ori_question and len(args.ori_question) > 128:
         fail("--ori-question 超过 128 字符。")
 
-    api_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+    api_key = read_api_key()
     if not api_key and sys.stdin.isatty():
         api_key = getpass.getpass("DEEPSEEK_API_KEY: ").strip()
     if not api_key:
-        fail("未设置 DEEPSEEK_API_KEY。", HINTS[401])
+        fail(f"未找到 DeepSeek Key（{KEY_FILE} 无内容，且环境变量 DEEPSEEK_API_KEY 为空）。", HINTS[401])
 
     try:
         data = search(build_body(args), api_key)

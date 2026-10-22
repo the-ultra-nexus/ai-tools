@@ -1,6 +1,6 @@
 ---
 name: deepseek-web-search
-description: 'DeepSeek 联网搜索 API（/v1/tools/search），返回带 rerank_score、authority、date 加权的网页结果，支持 site:/lang:/after: 等查询操作符。需要联网事实、时效信息、出处求证时使用。凭证为环境变量 DEEPSEEK_API_KEY。收费 API（$0.75/千次成功请求，仅 HTTP 200 且结果非空才计费），账户级 100 QPS 限流。'
+description: 'DeepSeek 联网搜索 API（/v1/tools/search），返回带 rerank_score、authority、date 加权的网页结果，支持 site:/lang:/after: 等查询操作符。需要联网事实、时效信息、出处求证时使用。凭证为该用户配置目录下的 `deepseek/api_key`（默认 `~/.config/deepseek/api_key`，可用 `XDG_CONFIG_HOME` 覆盖），其次读环境变量 DEEPSEEK_API_KEY。收费 API（$0.75/千次成功请求，仅 HTTP 200 且结果非空才计费），账户级 100 QPS 限流。'
 argument-hint: "<查询词> [-c N] [--need-content] [--ori-question <原始问题>]"
 ---
 
@@ -68,7 +68,7 @@ query 原样转发给搜索引擎，操作符可组合：
 | HTTP | 含义 | 处置 |
 |---|---|---|
 | 400 | 请求头/体非法，含字段值越界 | 改请求，不要原样重试 |
-| 401 | Key 缺失或无效 | 到 https://platform.deepseek.com 取 key，设置 `DEEPSEEK_API_KEY` |
+| 401 | Key 缺失或无效 | 到 https://platform.deepseek.com 取 key，写入 `~/.config/deepseek/api_key`（目录 700、文件 600），或设置 `DEEPSEEK_API_KEY` |
 | 402 | 余额不足 | 充值后重试 |
 | 408 / 429 / 5xx | 超时、限流、服务端错误 | 等待后重试 |
 | 413 | 请求体过大 | 缩短 query / 减少参数 |
