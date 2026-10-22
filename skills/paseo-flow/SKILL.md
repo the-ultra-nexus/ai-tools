@@ -63,15 +63,15 @@ daemon 30s 起不来就停下写汇报，别带病开链。
 TASK_ID="$(date +%Y%m%d)-<slug>"
 TASK_DIR="$HOME/data/paseo-flow/$TASK_ID"     # 放仓库外，避免污染工作区
 BASE_SHA=$(git -C <repo> rev-parse HEAD)      # 独立 unit 的统一基线
-CHAIN_START=$(date +%s)                       # 整链 3h 上限从这里起算
 mkdir -p "$TASK_DIR"/{units,state,review}
+printf '{"chain_start":%s}\n' "$(date +%s)" > "$TASK_DIR/state/chain.json"   # 整链 3h 起点落盘，断链后照此续算
 ```
 
 后文所有落盘都用 `$TASK_DIR` 绝对路径。§4 会 cd 进 worktree，相对路径会把文件写进别人的分支。
 
 ## 0.2 续跑（以 state 文件为准，不信回忆）
 
-会话被压缩或打断后，读 `$TASK_DIR/state/<unit>.json` 逐个恢复：
+会话被压缩或打断后，读 `$TASK_DIR/state/<unit>.json` 逐个恢复；整链预算起点在 `$TASK_DIR/state/chain.json`（`jq -r .chain_start`），断链后照它续算，不重置：
 
 | stage | 恢复动作 |
 |---|---|
@@ -294,7 +294,7 @@ paseo wait "$id" --timeout 900
 - 每条 finding ≤2 次修复
 - 每个 unit ≤2 轮 review-fix
 - 同一验收命令连续 2 次红 → 冻结
-- 整链 ≤3h（自 `CHAIN_START` 起算）；连续 2 个 unit 触到上限 → 整链停，写 `ESCALATE`
+- 整链 ≤3h（起点＝`$TASK_DIR/state/chain.json` 的 `chain_start`，续跑不重置）；连续 2 个 unit 触到上限 → 整链停，写 `ESCALATE`
 
 到限仍有 High → `paseo stop "$id"`，置 `stage:frozen`，剩余 findings 连同 worktree 路径写进汇报。
 Medium 未清不阻塞合并，但必须写进汇报；Low 静默丢弃。
