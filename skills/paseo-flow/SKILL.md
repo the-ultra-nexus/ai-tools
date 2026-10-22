@@ -13,16 +13,17 @@ description: '主脑编排的全自动多 agent 编码流：主脑出设计，�
 | 角色 | 模型 | 干什么 |
 |---|---|---|
 | 主脑 | 本会话 | 路由、设计、拆 unit、裁决 verdict、收敛决策 |
+| 探索 subagent | `paseo-explorer`（定义内写死 `hw/group/worker`） | 设计前摸清仓库内现有实现、调用点、接口；只回十行摘要 |
 | 调研 subagent | `paseo-researcher-a` / `-b`（定义内写死 `hw/group/reviewer1` / `hw/group/reviewer2`） | 缺外部事实时两路并行调研、跑 `--help`、读源码、refute 结论 |
 | 规格红队 | `paseo-plan-critic`（`hw/group/reviewer2`） | 全链派发前审 unit 规格，不审代码 |
 | 执行 worker | `paseo run --provider pi --model magpie/hw/group/worker` | worktree 内实现、跑验收、修 findings |
 | 评审 subagent | `paseo-reviewer-a` / `-b`（定义内写死 `hw/group/reviewer1` / `hw/group/reviewer2`） | A 路全量冷评审；B 路只做安全/数据丢失/并发/测试削弱维度复审，或对单条 High 证伪 |
 
-pi 只跑 §3 的 worker（由 paseo daemon 拉起）；调研与评审走 Claude 原生 subagent，模型写在各 agent 定义的 `model:` 里。
+pi 只跑 §3 的 worker（由 paseo daemon 拉起）；探索、调研与评审走 Claude 原生 subagent，模型写在各 agent 定义的 `model:` 里。`hw/group/worker` 这个槽两处共用：探索 subagent 的 `model:`，以及 pi 的 `--model`。同一模型，不是两条路，也不另开 explore 槽。
 
 网关的模型 id 一律带 `hw/` 前缀（`hw/group/worker`、`hw/group/reviewer1` …）。不带前缀的旧别名在 `/v1/messages` 和 `/v1/chat/completions` 上都已 404；pi 的 `--model` 是模式匹配，写 `magpie/group/worker` 会模糊命中 `hw/group/worker` 而看似正常，别依赖这个巧合。
 
-agent 定义在 `skills/paseo-flow/agents/`，`./sync.sh` 会同步到 `~/.claude/agents/paseo-flow/`。五个定义都设了 `omitClaudeMd: true`；评审器是 `Read, Grep, Glob, Bash`，规格红队是 `Read, Grep, Glob`，调研器没有 `Edit` 和 `Agent`。
+agent 定义在 `skills/paseo-flow/agents/`，`./sync.sh` 会同步到 `~/.claude/agents/paseo-flow/`。六个定义都设了 `omitClaudeMd: true`；探索器和评审器是 `Read, Grep, Glob, Bash`，规格红队是 `Read, Grep, Glob`，调研器没有 `Edit` 和 `Agent`。
 
 **无会话/脚本场景的后备**（cron、`claude -p` 里再套一层、或 agent 定义不可用时）：
 
@@ -77,7 +78,7 @@ printf '{"chain_start":%s}\n' "$(date +%s)" > "$TASK_DIR/state/chain.json"   # �
 
 | stage | 恢复动作 |
 |---|---|
-| research / design / split | 重读 design.md、units/、research*.md，缺哪步补哪步 |
+| research / design / split | 重读 design.md、units/、`research.md` 汇总；不重读 `research-*.md` 和 `explore.md`，缺哪步补哪步 |
 | run | `paseo inspect <id>` 还活着 → 继续 wait；查不到 → 按 unit 文件重派 |
 | gate / review | `git -C <wt> rev-parse HEAD` 等于 state 的 `head` → 直接进 §4；不等（有未提交改动）→ 先让 worker 提交再进 §4 |
 | repair | round 加一，按 §5 继续 |
@@ -88,11 +89,17 @@ id 为空或 agent 已不存在，一律按「重派」处理，重派前把该 
 
 **方案由主脑自己出**——初始信息、技术路线、取舍、接口形态全在本会话里成型，不外包设计：设计的价值就在全局上下文，交出去等于把它丢了。
 
+缺的是仓库内事实（现有实现、调用点、接口）时，起一个探索 subagent，主脑不自己 Read/Grep 仓库来摸底：
+
+- `subagent_type: paseo-explorer`，prompt 只给问题、仓库绝对路径、产出写到 `$TASK_DIR/explore.md`。
+- 它回的不超过十行就是摸底的全部。主脑不读 `explore.md`，不把文件内容捞回上下文。
+- 探索只提供事实，方案仍由主脑出。
+
 只有「缺外部事实」时才起 subagent 调研：**一条消息里并行发两个 Agent 调用**，两路同题、各搜各的。
 
 - `subagent_type: paseo-researcher-a`，prompt 写清：要哪些事实、什么格式、要几条来源、每条必须带链接，产出写到 `$TASK_DIR/research-a.md`。
 - `subagent_type: paseo-researcher-b`，同一个问题，产出写到 `$TASK_DIR/research-b.md`。
-- 两个定义模型不同、上下文独立，互不可见；主脑只读两份文件，不把全文吞进上下文。
+- 两个定义模型不同、上下文独立，互不可见。主脑只收两路各自回的不超过十行摘要，不读 `research-*.md`。
 
 约束：
 
@@ -100,7 +107,7 @@ id 为空或 agent 已不存在，一律按「重派」处理，重派前把该 
 - 调研器没有 `Edit`/`Agent`，但有 `Write`——只许写 `$TASK_DIR/research-*.md`，别动仓库源码。
 - 两路回来主脑抽查一次 `git -C <repo> status --porcelain`：出现计划外改动 → 该路结论整体降权，写进汇报（它有 Write，防的就是这个）。
 - **不要让 pi 做调研或长输出**（实测超时返空）；pi 只归 §3 的 worker。
-- 两路回来由主脑汇总：一致的钉成事实，分歧保留进 `research.md`——分歧本身就是决策信息，不强行统一。交叉验证也在主脑这层做：逐条问「出自哪、哪个版本、现在还成立吗」。
+- 两路回来由主脑汇总：只根据两段十行摘要，一致的钉成事实，分歧保留进 `research.md`——分歧本身就是决策信息，不强行统一。摘要里没出处的记为未验证，不回读全文去补。
 
 产出落盘：`$TASK_DIR/research-a.md`、`research-b.md`，汇总写 `$TASK_DIR/research.md`（含分歧点与未验证项）；设计本身写 `$TASK_DIR/design.md`（目标、取舍、接口形态、非目标），后面红队和 worker 都拿它当指针。
 
