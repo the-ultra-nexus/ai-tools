@@ -1,6 +1,6 @@
 # ai-tools
 
-个人 AI 工具集：skill、脚本、规范文档的单一来源。本仓库是权威版本，改完跑 `./sync.sh` 同步到 magpie library；magpie 把 library 里的 skill 软链进各 agent（`~/.claude/skills`、`~/.codex/skills`、`~/.config/deveco/skills`），所以同步完立即生效，不需要重装。
+个人 AI 工具集：skill、脚本、规范文档的 Git 仓库。**运行时主副本在 CC Switch**（`~/.cc-switch/skills/`，软链到 `~/.claude/skills/` 与 `~/.pi/agent/skills/`）；本仓库保存 Git 版本和未安装的 skill（如 `paseo-flow`）。改完跑 `./sync.sh` 从主副本反向备份，再提交。
 
 ## 目录
 
@@ -14,7 +14,7 @@
 | `skills/paseo-flow/SKILL.md` | 主脑编排的全自动多 agent 编码流 skill：主脑设计 → 两个原生 subagent（不同模型）并行调研 → 拆 task units → 规格红队审 unit → Paseo daemon 管 pi worker（worktree 隔离）执行 → 冷评审 subagent 只出 verdict+findings → 有界修复到收敛；含降档路由、agent 定义、paseo 调用模板与踩坑速查 |
 | `skills/paseo-flow/agents/*.md` | 五个 Claude 原生 subagent 定义：调研 A/B 路、评审 A/B 路、规格红队（异构模型，`omitClaudeMd`，评审/红队只读） |
 | `docs/tts-flashcard.md` | tts 脚本详情（实现、坑、实测记录） |
-| `sync.sh` | 同步 `skills/*` 到 `~/.config/magpie/library/skills/`，并把 `skills/*/agents/` 同步到 `~/.claude/agents/<skill>/` |
+| `sync.sh` | 从 `~/.cc-switch/skills/` 反向备份已安装 skill 到 `skills/*`，并把 `skills/*/agents/` 同步到 `~/.claude/agents/<skill>/` |
 | `check-frontmatter.sh` | 校验 `skills/*/SKILL.md` 与 `skills/*/agents/*.md` 的 YAML frontmatter（name/description 存在且可解析） |
 
 ## 同步
@@ -24,7 +24,7 @@
 ./sync.sh
 ```
 
-用 `rsync -a --delete`：仓库里删掉的文件也会从 library 一并删除。
+`sync.sh` 只处理本仓库已有的 skill：CC Switch 有同名目录时，用 `rsync -a --delete` 反向覆盖本仓库；没有的（如 `paseo-flow`）跳过并打印提示。传参数可备份新 skill：`./sync.sh <name>` 会自动建目录。
 
 `skills/*/agents/` 会同步到 `~/.claude/agents/<skill>/`；已有目录热加载，新建目录后需重启一次 Claude Code。
 
@@ -42,6 +42,6 @@
 
 ## 新增 skill
 
-1. 建 `skills/<name>/`，放 `SKILL.md`（frontmatter 带 `name`、`description`）
-2. `./sync.sh`
-3. magpie App → Library → 以文件夹导入 `skills/<name>`，选要应用的 agent
+1. 在 CC Switch 里导入或启用 skill，主副本落到 `~/.cc-switch/skills/<name>/`
+2. 确认软链已出现在 `~/.claude/skills/` 或 `~/.pi/agent/skills/`
+3. `./sync.sh <name>` 把它备份进本仓库，然后提交
